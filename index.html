@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>아이디어 기획 노트 (Speed Control)</title>
+    <title>아이디어 기획 노트 (Optimized)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
@@ -92,8 +92,7 @@
         
         <div class="p-3 border-t border-gray-700 text-xs text-gray-500 flex justify-between items-center bg-gray-800">
             <span id="connectionStatus" class="flex items-center"><span class="w-2 h-2 rounded-full bg-red-500 mr-2"></span>연결 끊김</span>
-            <!-- 하단 Web Access 표시는 이제 토글로 대체되어 제거하거나 유지 -->
-            <span class="text-gray-500 font-medium">v2.1 Speed Mode</span>
+            <span class="text-gray-500 font-medium">v2.2 High Performance</span>
         </div>
     </div>
 
@@ -122,7 +121,7 @@
         <div class="p-5 border-t border-gray-700 bg-gray-800/90 backdrop-blur">
             <div class="max-w-4xl mx-auto relative">
                 
-                <!-- [NEW] 검색 모드 토글 스위치 -->
+                <!-- 검색 모드 토글 -->
                 <div class="flex items-center justify-end mb-2 px-1">
                     <label class="flex items-center cursor-pointer select-none">
                         <div class="mr-2 text-xs text-gray-400 font-medium" id="searchLabel">검색 끄기 (빠름)</div>
@@ -180,7 +179,7 @@
         let GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || '';
         let currentIdeaId = null;
         let chatHistory = [];
-        let isSearchEnabled = false; // 검색 모드 상태 (기본값: 꺼짐)
+        let isSearchEnabled = false;
 
         window.onload = function() {
             if (!SCRIPT_URL || !GEMINI_API_KEY) {
@@ -262,20 +261,41 @@
             document.getElementById('sidebar').classList.toggle('hidden');
         }
 
+        // [최적화] 아이디어 목록 불러오기 (캐싱 + 백그라운드 갱신)
         async function fetchIdeas() {
             const listContainer = document.getElementById('ideaListContainer');
+            
+            // 1. 캐시된 데이터가 있으면 즉시 보여줌 (속도 0.1초)
+            const cachedIdeas = localStorage.getItem('cached_ideas');
+            if (cachedIdeas) {
+                try {
+                    const ideas = JSON.parse(cachedIdeas);
+                    renderIdeaList(ideas);
+                } catch(e) {
+                    // 캐시 깨짐 무시
+                }
+            } else {
+                // 캐시 없으면 로딩 표시
+                listContainer.innerHTML = '<div class="text-center text-gray-500 mt-10 text-sm">로딩 중...</div>';
+            }
+
             try {
+                // 2. 서버에서 최신 데이터 가져옴 (백그라운드)
                 const response = await fetch(`${SCRIPT_URL}?action=getIdeas`);
                 const result = await response.json();
                 
                 if (result.status === 'success') {
+                    // 3. 최신 데이터로 화면 갱신 및 캐시 업데이트
+                    localStorage.setItem('cached_ideas', JSON.stringify(result.data));
                     renderIdeaList(result.data);
                 } else {
                     throw new Error(result.message);
                 }
             } catch (error) {
                 console.error(error);
-                listContainer.innerHTML = `<div class="text-center text-red-400 mt-10 text-xs p-4 bg-red-900/20 rounded mx-2 border border-red-900/50">데이터 로드 실패<br>${error.message}</div>`;
+                if (!cachedIdeas) {
+                    listContainer.innerHTML = `<div class="text-center text-red-400 mt-10 text-xs p-4 bg-red-900/20 rounded mx-2 border border-red-900/50">데이터 로드 실패<br>${error.message}</div>`;
+                }
                 updateStatusUI(false);
             }
         }
@@ -313,40 +333,45 @@
             });
         }
 
+        // [최적화] 아이디어 삭제 (낙관적 업데이트)
         async function deleteIdea(id, event) {
             event.stopPropagation();
-            if (!confirm("정말로 이 아이디어 노트를 삭제하시겠습니까?\n(대화 내용도 모두 삭제됩니다)")) return;
+            if (!confirm("정말로 삭제하시겠습니까?")) return;
 
-            const btn = event.currentTarget;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin text-xs"></i>';
-            document.getElementById('deleteLoader').classList.remove('hidden');
+            // 1. 화면에서 즉시 지우기 (서버 응답 안 기다림 = 속도 0초)
+            const itemElement = event.target.closest('.idea-item');
+            if (itemElement) itemElement.remove();
 
+            // 현재 보고 있던 아이디어면 화면 비우기
+            if (currentIdeaId === id) {
+                currentIdeaId = null;
+                document.getElementById('currentIdeaTitle').innerText = "선택된 아이디어 없음";
+                document.getElementById('chatContainer').innerHTML = `
+                    <div class="flex flex-col items-center justify-center h-full text-gray-500 space-y-4">
+                        <i class="fas fa-trash text-3xl opacity-30"></i>
+                        <p>아이디어가 삭제되었습니다.</p>
+                    </div>`;
+            }
+
+            // 2. 캐시 데이터에서도 삭제
+            const cachedIdeas = localStorage.getItem('cached_ideas');
+            if (cachedIdeas) {
+                try {
+                    let ideas = JSON.parse(cachedIdeas);
+                    ideas = ideas.filter(idea => idea.id !== id);
+                    localStorage.setItem('cached_ideas', JSON.stringify(ideas));
+                } catch(e) {}
+            }
+
+            // 3. 백그라운드에서 서버 요청 (실패 시 복구 등은 생략하고 사용자 경험 우선)
             try {
-                const response = await fetch(SCRIPT_URL + "?action=deleteIdea", {
+                fetch(SCRIPT_URL + "?action=deleteIdea", {
                     method: 'POST',
                     body: JSON.stringify({ id: id, action: 'deleteIdea' })
                 });
-                
-                const result = await response.json();
-                
-                if (result.status === 'success') {
-                    if (currentIdeaId === id) {
-                        currentIdeaId = null;
-                        document.getElementById('currentIdeaTitle').innerText = "선택된 아이디어 없음";
-                        document.getElementById('chatContainer').innerHTML = `
-                            <div class="flex flex-col items-center justify-center h-full text-gray-500 space-y-4">
-                                <i class="fas fa-trash text-3xl opacity-30"></i>
-                                <p>아이디어가 삭제되었습니다.</p>
-                            </div>`;
-                    }
-                    await fetchIdeas();
-                } else {
-                    alert("삭제 실패: " + result.message);
-                }
+                // 성공 여부와 상관없이 이미 화면에선 사라짐
             } catch (error) {
-                alert("삭제 중 오류 발생: " + error);
-            } finally {
-                document.getElementById('deleteLoader').classList.add('hidden');
+                console.error("삭제 요청 실패 (백그라운드)", error);
             }
         }
 
@@ -355,12 +380,14 @@
             if (!title) return;
 
             try {
+                // 생성은 ID를 받아와야 하므로 서버 응답 기다림 (로딩 표시 등 추가 가능하나 간단히 유지)
                 const response = await fetch(SCRIPT_URL + "?action=createIdea", {
                     method: 'POST',
                     body: JSON.stringify({ title: title, action: 'createIdea' })
                 });
                 const result = await response.json();
                 if (result.status === 'success') {
+                    // 서버 응답 오면 목록 갱신 (캐시 업데이트 포함됨)
                     await fetchIdeas();
                     selectIdea(result.data.id, result.data.title);
                 }
@@ -374,7 +401,8 @@
             document.getElementById('currentIdeaTitle').innerText = title;
             document.getElementById('chatContainer').innerHTML = '<div class="flex items-center justify-center h-full text-gray-500"><i class="fas fa-spinner fa-spin text-2xl"></i></div>';
             
-            fetchIdeas(); 
+            // 선택 시 목록 갱신은 생략하거나 백그라운드 처리 (속도 위해)
+            // fetchIdeas(); 
 
             try {
                 const response = await fetch(`${SCRIPT_URL}?action=getChats&ideaId=${id}`);
@@ -403,6 +431,7 @@
 
             } catch (error) {
                 console.error(error);
+                document.getElementById('chatContainer').innerHTML = '<div class="text-center text-red-400 mt-20 text-sm">대화 로드 실패</div>';
             }
         }
 
@@ -443,12 +472,8 @@
                 finalContents = [{ role: "user", parts: [{ text: message }] }];
             }
 
-            // [API 요청 구성]
-            const requestBody = {
-                contents: finalContents,
-            };
+            const requestBody = { contents: finalContents };
 
-            // 검색이 켜져있을 때만 tool과 systemInstruction 추가 (속도 최적화)
             if (isSearchEnabled) {
                 requestBody.tools = [{ googleSearch: {} }];
                 requestBody.systemInstruction = { 
@@ -475,7 +500,6 @@
                     let aiText = data.candidates[0].content.parts[0].text;
                     let groundingHTML = "";
 
-                    // 검색 결과가 있는 경우에만 처리
                     const groundingMetadata = data.candidates[0].groundingMetadata;
                     if (groundingMetadata && groundingMetadata.groundingChunks) {
                         groundingHTML = `<div class="mt-4 pt-3 border-t border-gray-600 flex flex-wrap gap-2">`;
@@ -514,7 +538,6 @@
 
         function appendMessageUI(role, text, animate = true, isHTML = false) {
             const container = document.getElementById('chatContainer');
-            // 로딩 스피너 제거
             if (container.querySelector('.fa-spinner') || container.querySelector('.fa-search') || container.querySelector('.fa-trash')) container.innerHTML = '';
 
             const wrapper = document.createElement('div');
