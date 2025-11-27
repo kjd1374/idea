@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>아이디어 정리 노트 (with Gemini & Google Sheets)</title>
+    <!-- Tailwind CSS (디자인용) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 마크다운 렌더링용 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- 아이콘 -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* 커스텀 스크롤바 */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        .markdown-body p { margin-bottom: 0.8em; }
+        .markdown-body ul { list-style-type: disc; padding-left: 1.5em; margin-bottom: 0.8em; }
+        .markdown-body ol { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 0.8em; }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-weight: bold; margin-top: 1em; margin-bottom: 0.5em; }
+        .markdown-body code { background-color: #374151; padding: 0.2em 0.4em; border-radius: 0.25em; }
+        .markdown-body pre { background-color: #111827; padding: 1em; border-radius: 0.5em; overflow-x: auto; margin-bottom: 1em; }
+        
+        .typing-indicator span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background-color: #9ca3af;
+            border-radius: 50%;
+            animation: typing 1s infinite;
+            margin: 0 2px;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 h-screen overflow-hidden flex font-sans">
+
+    <!-- 사이드바 (아이디어 리스트) -->
+    <div class="w-80 bg-gray-800 flex flex-col border-r border-gray-700 flex-shrink-0 transition-all duration-300" id="sidebar">
+        <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+            <h1 class="text-xl font-bold text-blue-400"><i class="fas fa-lightbulb mr-2"></i>Idea Note</h1>
+            <button onclick="toggleSettings()" class="text-gray-400 hover:text-white transition"><i class="fas fa-cog"></i></button>
+        </div>
+        
+        <!-- 새 아이디어 버튼 -->
+        <div class="p-4">
+            <button onclick="createNewIdea()" class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition flex items-center justify-center font-medium shadow-lg">
+                <i class="fas fa-plus mr-2"></i> 새 아이디어
+            </button>
+        </div>
+
+        <!-- 리스트 -->
+        <div class="flex-1 overflow-y-auto px-2" id="ideaListContainer">
+            <div class="text-center text-gray-500 mt-10 text-sm">로딩 중...</div>
+        </div>
+    </div>
+
+    <!-- 메인 (채팅 영역) -->
+    <div class="flex-1 flex flex-col h-full relative bg-gray-900">
+        <!-- 현재 아이디어 헤더 -->
+        <div class="h-16 border-b border-gray-700 flex items-center px-6 bg-gray-800/50 backdrop-blur-sm justify-between">
+            <div class="flex items-center">
+                <button class="mr-4 md:hidden text-gray-400" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+                <h2 id="currentIdeaTitle" class="text-lg font-semibold truncate max-w-md">선택된 아이디어 없음</h2>
+            </div>
+            <div id="connectionStatus" class="text-xs px-2 py-1 rounded bg-red-900/50 text-red-200">연결 끊김</div>
+        </div>
+
+        <!-- 채팅 메시지 영역 -->
+        <div id="chatContainer" class="flex-1 overflow-y-auto p-4 space-y-4">
+            <div class="flex flex-col items-center justify-center h-full text-gray-500 space-y-4">
+                <i class="fas fa-comments text-4xl mb-2"></i>
+                <p>왼쪽에서 아이디어를 선택하거나 새로 만드세요.</p>
+            </div>
+        </div>
+
+        <!-- 입력 영역 -->
+        <div class="p-4 border-t border-gray-700 bg-gray-800">
+            <div class="max-w-4xl mx-auto relative">
+                <textarea id="userInput" rows="1" 
+                    class="w-full bg-gray-700 text-white rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden" 
+                    placeholder="아이디어를 구체화하거나 기획을 의논해보세요..." 
+                    oninput="autoResize(this)"
+                    onkeydown="handleEnter(event)"></textarea>
+                <button onclick="sendMessage()" 
+                    class="absolute right-2 bottom-2 w-8 h-8 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white transition shadow-lg">
+                    <i class="fas fa-paper-plane text-sm"></i>
+                </button>
+            </div>
+            <div class="text-center mt-2 text-xs text-gray-500">Gemini can make mistakes. Check important info.</div>
+        </div>
+    </div>
+
+    <!-- 설정 모달 -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center hidden backdrop-blur-sm">
+        <div class="bg-gray-800 rounded-xl p-6 w-96 shadow-2xl border border-gray-700 transform transition-all scale-100">
+            <h3 class="text-xl font-bold mb-4 flex items-center"><i class="fas fa-sliders-h mr-2"></i> 설정</h3>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-400 mb-1">Google Apps Script URL (배포 주소)</label>
+                <input type="text" id="scriptUrlInput" class="w-full bg-gray-700 rounded p-2 text-white border border-gray-600 focus:border-blue-500 focus:outline-none text-xs" placeholder="https://script.google.com/ macros/s/...">
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-400 mb-1">Gemini API Key</label>
+                <input type="password" id="apiKeyInput" class="w-full bg-gray-700 rounded p-2 text-white border border-gray-600 focus:border-blue-500 focus:outline-none text-xs" placeholder="AI Studio에서 발급받은 키 입력">
+            </div>
+
+            <div class="flex justify-end space-x-2">
+                <button onclick="toggleSettings()" class="px-4 py-2 rounded text-gray-300 hover:bg-gray-700 transition">닫기</button>
+                <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium transition shadow-lg">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 전역 변수 ---
+        let SCRIPT_URL = localStorage.getItem('gas_script_url') || '';
+        let GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || '';
+        let currentIdeaId = null;
+        let chatHistory = [];
+
+        // --- 초기화 ---
+        window.onload = function() {
+            if (!SCRIPT_URL || !GEMINI_API_KEY) {
+                toggleSettings();
+            } else {
+                fetchIdeas();
+                updateConnectionStatus(true);
+            }
+        };
+
+        // --- UI 조작 함수 ---
+        function toggleSettings() {
+            const modal = document.getElementById('settingsModal');
+            if (modal.classList.contains('hidden')) {
+                document.getElementById('scriptUrlInput').value = SCRIPT_URL;
+                document.getElementById('apiKeyInput').value = GEMINI_API_KEY;
+                modal.classList.remove('hidden');
+            } else {
+                modal.classList.add('hidden');
+            }
+        }
+
+        function saveSettings() {
+            const url = document.getElementById('scriptUrlInput').value.trim();
+            const key = document.getElementById('apiKeyInput').value.trim();
+            
+            if (!url || !key) {
+                alert('URL과 API Key를 모두 입력해주세요.');
+                return;
+            }
+
+            SCRIPT_URL = url;
+            GEMINI_API_KEY = key;
+            localStorage.setItem('gas_script_url', SCRIPT_URL);
+            localStorage.setItem('gemini_api_key', GEMINI_API_KEY);
+            
+            toggleSettings();
+            updateConnectionStatus(true);
+            fetchIdeas(); // 설정 저장 후 리스트 갱신
+        }
+
+        function updateConnectionStatus(isConnected) {
+            const el = document.getElementById('connectionStatus');
+            if (isConnected && SCRIPT_URL) {
+                el.textContent = '연결됨';
+                el.className = 'text-xs px-2 py-1 rounded bg-green-900/50 text-green-200';
+            } else {
+                el.textContent = '설정 필요';
+                el.className = 'text-xs px-2 py-1 rounded bg-red-900/50 text-red-200';
+            }
+        }
+
+        function autoResize(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+        }
+
+        function handleEnter(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('hidden');
+        }
+
+        // --- Apps Script 통신 함수 ---
+        
+        // 1. 아이디어 목록 가져오기
+        async function fetchIdeas() {
+            const listContainer = document.getElementById('ideaListContainer');
+            listContainer.innerHTML = '<div class="text-center text-gray-500 mt-10 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>동기화 중...</div>';
+
+            try {
+                // GET 요청은 fetch 대신 script 태그 JSONP 방식이 아니면 CORS 이슈가 있을 수 있으나, 
+                // Apps Script 웹앱을 "Anyone"으로 배포하면 redirect fetch가 작동함.
+                const response = await fetch(`${SCRIPT_URL}?action=getIdeas`);
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    renderIdeaList(result.data);
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                console.error(error);
+                listContainer.innerHTML = `<div class="text-center text-red-400 mt-10 text-sm p-4">데이터 로드 실패.<br>설정의 URL을 확인하세요.<br><br><span class="text-xs text-gray-500">${error.message}</span></div>`;
+                updateConnectionStatus(false);
+            }
+        }
+
+        function renderIdeaList(ideas) {
+            const listContainer = document.getElementById('ideaListContainer');
+            listContainer.innerHTML = '';
+            
+            if (ideas.length === 0) {
+                listContainer.innerHTML = '<div class="text-center text-gray-500 mt-10 text-sm">아직 아이디어가 없습니다.<br>새로 만들어보세요!</div>';
+                return;
+            }
+
+            // 최신순 정렬
+            ideas.reverse().forEach(idea => {
+                const div = document.createElement('div');
+                div.className = `p-3 mb-2 rounded cursor-pointer transition flex items-center ${currentIdeaId === idea.id ? 'bg-gray-700 border-l-4 border-blue-500' : 'bg-gray-800 hover:bg-gray-700 border-l-4 border-transparent'}`;
+                div.onclick = () => selectIdea(idea.id, idea.title);
+                div.innerHTML = `
+                    <div class="flex-1 min-w-0">
+                        <div class="font-medium truncate text-sm text-gray-200">${idea.title}</div>
+                        <div class="text-xs text-gray-500 mt-1">${new Date(idea.date).toLocaleDateString()}</div>
+                    </div>
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+
+        // 2. 새 아이디어 생성
+        async function createNewIdea() {
+            const title = prompt("새로운 아이디어의 주제를 입력하세요:");
+            if (!title) return;
+
+            try {
+                // POST 요청: Google Apps Script는 단순 fetch POST 시 CORS 오류 발생 쉬움.
+                // fetch의 'no-cors' 모드는 응답을 못받음.
+                // 해결책: text/plain으로 보내고 Apps Script에서 JSON.parse 하기.
+                
+                const response = await fetch(SCRIPT_URL + "?action=createIdea", {
+                    method: 'POST',
+                    body: JSON.stringify({ title: title, action: 'createIdea' })
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    await fetchIdeas(); // 목록 갱신
+                    selectIdea(result.data.id, result.data.title); // 바로 선택
+                }
+            } catch (error) {
+                alert("아이디어 생성 실패: " + error);
+            }
+        }
+
+        // 3. 아이디어 선택 및 채팅 로드
+        async function selectIdea(id, title) {
+            currentIdeaId = id;
+            document.getElementById('currentIdeaTitle').innerText = title;
+            document.getElementById('chatContainer').innerHTML = '<div class="text-center text-gray-500 mt-20"><i class="fas fa-spinner fa-spin mr-2"></i>대화 내역 불러오는 중...</div>';
+            
+            // 사이드바 UI 업데이트
+            fetchIdeas(); // (선택 상태 표시 갱신을 위해 - 비효율적이지만 간단함)
+
+            try {
+                const response = await fetch(`${SCRIPT_URL}?action=getChats&ideaId=${id}`);
+                const result = await response.json();
+                
+                const container = document.getElementById('chatContainer');
+                container.innerHTML = ''; // 초기화
+
+                chatHistory = []; // 메모리 초기화
+
+                if (result.status === 'success' && result.data.length > 0) {
+                    result.data.forEach(msg => {
+                        appendMessageUI(msg.role, msg.text, false);
+                        // 히스토리 배열에 추가 (Gemini 문맥용)
+                        chatHistory.push({
+                            role: msg.role === 'user' ? 'user' : 'model',
+                            parts: [{ text: msg.text }]
+                        });
+                    });
+                    scrollToBottom();
+                } else {
+                    container.innerHTML = '<div class="text-center text-gray-600 mt-20 text-sm">대화 내역이 없습니다.<br>아이디어 정리를 시작해보세요!</div>';
+                }
+
+                // 모바일에서 선택 시 사이드바 닫기
+                if (window.innerWidth < 768) {
+                    document.getElementById('sidebar').classList.add('hidden');
+                }
+
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        // --- 채팅 및 Gemini 통신 ---
+
+        async function sendMessage() {
+            if (!currentIdeaId) {
+                alert("먼저 아이디어를 선택하거나 생성해주세요.");
+                return;
+            }
+            if (!GEMINI_API_KEY) {
+                alert("설정에서 API Key를 입력해주세요.");
+                toggleSettings();
+                return;
+            }
+
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            // 1. 사용자 메시지 UI 표시
+            appendMessageUI('user', message);
+            input.value = '';
+            input.style.height = 'auto';
+            scrollToBottom();
+
+            // 2. Apps Script에 사용자 메시지 저장 (백그라운드)
+            saveChatToDrive(currentIdeaId, 'user', message);
+
+            // 3. Gemini 호출 준비
+            const loadingId = showLoading();
+            
+            // 히스토리 구성
+            const contents = [...chatHistory, { role: "user", parts: [{ text: message }] }];
+
+            try {
+                // Gemini API 호출
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: contents })
+                });
+
+                const data = await response.json();
+                removeLoading(loadingId);
+
+                if (data.candidates && data.candidates[0].content) {
+                    const aiText = data.candidates[0].content.parts[0].text;
+                    
+                    // 4. AI 응답 UI 표시
+                    appendMessageUI('model', aiText);
+                    
+                    // 5. 메모리 히스토리 업데이트
+                    chatHistory.push({ role: "user", parts: [{ text: message }] });
+                    chatHistory.push({ role: "model", parts: [{ text: aiText }] });
+
+                    // 6. Apps Script에 AI 응답 저장 (백그라운드)
+                    saveChatToDrive(currentIdeaId, 'model', aiText);
+                } else {
+                    appendMessageUI('model', '죄송합니다. 오류가 발생했습니다. (API 응답 없음)');
+                }
+
+            } catch (error) {
+                removeLoading(loadingId);
+                appendMessageUI('model', `에러 발생: ${error.message}`);
+            }
+            
+            scrollToBottom();
+        }
+
+        function appendMessageUI(role, text, animate = true) {
+            const container = document.getElementById('chatContainer');
+            
+            // 첫 메시지일 경우 안내 문구 삭제
+            if (container.querySelector('.fa-comments')) {
+                container.innerHTML = '';
+            }
+
+            const wrapper = document.createElement('div');
+            wrapper.className = `flex w-full mb-4 ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+            
+            const bubble = document.createElement('div');
+            const baseClass = "max-w-[85%] rounded-2xl p-4 shadow-sm text-sm leading-relaxed overflow-hidden";
+            
+            if (role === 'user') {
+                bubble.className = `${baseClass} bg-blue-600 text-white rounded-br-none`;
+                bubble.innerText = text; // 사용자는 일반 텍스트
+            } else {
+                bubble.className = `${baseClass} bg-gray-700 text-gray-100 rounded-bl-none markdown-body`;
+                bubble.innerHTML = marked.parse(text); // AI는 마크다운
+            }
+
+            wrapper.appendChild(bubble);
+            container.appendChild(wrapper);
+
+            if (animate) scrollToBottom();
+        }
+
+        function showLoading() {
+            const container = document.getElementById('chatContainer');
+            const id = 'loading-' + Date.now();
+            
+            const wrapper = document.createElement('div');
+            wrapper.id = id;
+            wrapper.className = 'flex w-full mb-4 justify-start';
+            wrapper.innerHTML = `
+                <div class="bg-gray-700 rounded-2xl p-4 rounded-bl-none typing-indicator">
+                    <span></span><span></span><span></span>
+                </div>
+            `;
+            container.appendChild(wrapper);
+            scrollToBottom();
+            return id;
+        }
+
+        function removeLoading(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+
+        function scrollToBottom() {
+            const container = document.getElementById('chatContainer');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 비동기로 저장 (사용자 경험을 위해 await 안 함)
+        function saveChatToDrive(ideaId, role, text) {
+            fetch(SCRIPT_URL + "?action=saveChat", {
+                method: 'POST',
+                body: JSON.stringify({ 
+                    ideaId: ideaId, 
+                    role: role, 
+                    text: text, 
+                    action: 'saveChat' 
+                })
+            }).catch(e => console.error("Save failed", e));
+        }
+
+    </script>
+</body>
+</html>
